@@ -27,25 +27,33 @@ https://github.com/ringhyacinth/AgentsHomeOffice/blob/master/SKILL.md
 
 Your lobster will automatically clone the repo, install dependencies, start the backend, configure status sync, and send you the access URL.
 
-### Option 2: 30-second manual setup
+### Option 2: One-Click Script (Recommended for Servers)
+
+To support distributed high-concurrency multi-agent connections, this project uses a microservice architecture: **Flask (Static Server) + WebSockets (Event Bus) + Node Proxy (Unified Routing)**.
+
+You can launch it directly using the provided script on macOS / Linux:
 
 ```bash
 # 1) Clone the repo
-git clone https://github.com/ringhyacinth/AgentsHomeOffice.git
+git clone https://github.com/CurvatureLab/AgentsHomeOffice.git
 cd AgentsHomeOffice
 
-# 2) Install dependencies
-python3 -m pip install -r backend/requirements.txt
-
-# 3) Initialize state file (first run)
-cp state.sample.json state.json
-
-# 4) Start the backend
-cd backend
-python3 app.py
+# 2) Run the one-click startup script (automatically installs Python & Node.js deps)
+chmod +x start.sh
+./start.sh
 ```
 
-Open **http://127.0.0.1:19000** and try switching states:
+Open **http://127.0.0.1:19000**.
+
+### Option 3: Docker Deployment
+
+```bash
+docker-compose up -d
+```
+Open **http://127.0.0.1:19000**.
+
+
+You can also push state via CLI:
 
 ```bash
 python3 set_state.py writing "Organizing documents"

@@ -27,25 +27,33 @@ https://github.com/ringhyacinth/AgentsHomeOffice/blob/master/SKILL.md
 
 龙虾会自动完成 clone、安装依赖、启动后端、配置状态同步，并把访问地址发给你。
 
-### 方式二：30 秒手动部署
+### 方式二：一键脚本部署 (推荐服务器使用)
+
+为了支撑分布式的高并发多 Agent 连入，本项目采用了 **Flask (前端静态服务) + WebSockets (Event Bus) + Node Proxy (统一路由)** 的微服务架构。
+
+你可以直接使用提供的一键脚本在 macOS / Linux 上启动：
 
 ```bash
 # 1) 下载仓库
-git clone https://github.com/ringhyacinth/AgentsHomeOffice.git
+git clone https://github.com/CurvatureLab/AgentsHomeOffice.git
 cd AgentsHomeOffice
 
-# 2) 安装依赖
-python3 -m pip install -r backend/requirements.txt
-
-# 3) 准备状态文件（首次）
-cp state.sample.json state.json
-
-# 4) 启动后端
-cd backend
-python3 app.py
+# 2) 授权并执行一键启动脚本 (会自动安装所需 Python 和 Node.js 依赖)
+chmod +x start.sh
+./start.sh
 ```
 
-打开 **http://127.0.0.1:19000**，然后试试切状态：
+打开 **http://127.0.0.1:19000** 即可访问。
+
+### 方式三：Docker 部署
+
+```bash
+docker-compose up -d
+```
+打开 **http://127.0.0.1:19000**。
+
+
+也可以通过 API 测试发送状态：
 
 ```bash
 python3 set_state.py writing "正在整理文档"
