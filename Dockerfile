@@ -3,9 +3,10 @@ FROM nikolaik/python-nodejs:python3.10-nodejs20
 WORKDIR /app
 COPY . .
 
-RUN pip install -r backend/requirements.txt websockets
+RUN pip install -r backend/requirements.txt
 RUN npm install ws http-proxy-middleware express cors
 
-EXPOSE 19000
+ENV DOCKER_ENV=1
+EXPOSE 8080
 
 CMD ["sh", "./start.sh"]

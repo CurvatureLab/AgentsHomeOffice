@@ -1,21 +1,25 @@
 #!/bin/bash
 echo "Starting Curvature Agent Home Office..."
 
-# 1. Install dependencies
-echo "Installing Python & Node dependencies..."
-pip install -r backend/requirements.txt websockets > /dev/null 2>&1
-npm install ws http-proxy-middleware express cors > /dev/null 2>&1
+# 1. Install dependencies (skip in Docker where they are pre-installed)
+if [ -z "$DOCKER_ENV" ]; then
+  echo "Installing Python & Node dependencies..."
+  pip install -r backend/requirements.txt > /dev/null 2>&1
+  npm install ws http-proxy-middleware express cors > /dev/null 2>&1
 
-# 2. Kill existing processes
-kill $(ps aux | grep "backend/app.py" | grep -v grep | awk '{print $2}') 2>/dev/null || true
-kill $(ps aux | grep "backend/event_bus.py" | grep -v grep | awk '{print $2}') 2>/dev/null || true
-kill $(ps aux | grep "node proxy.js" | grep -v grep | awk '{print $2}') 2>/dev/null || true
+  # Kill existing processes (local dev only)
+  kill $(ps aux | grep "backend/app.py" | grep -v grep | awk '{print $2}') 2>/dev/null || true
+  kill $(ps aux | grep "backend/event_bus.py" | grep -v grep | awk '{print $2}') 2>/dev/null || true
+  kill $(ps aux | grep "node proxy.js" | grep -v grep | awk '{print $2}') 2>/dev/null || true
+fi
 
-# 3. Start services
+# 2. Start backend services in background
 export STAR_BACKEND_PORT=19001
-nohup python3 backend/app.py > backend.log 2>&1 &
-nohup python3 backend/event_bus.py > event_bus.log 2>&1 &
+python3 backend/app.py &
+python3 backend/event_bus.py &
 sleep 2
-nohup node proxy.js > proxy.log 2>&1 &
 
-echo "✅ Deployment Successful! Access: http://127.0.0.1:19000"
+echo "✅ Deployment Successful! Access: http://127.0.0.1:${PORT:-8080}"
+
+# 3. Start proxy as foreground process (keeps container alive)
+exec node proxy.js

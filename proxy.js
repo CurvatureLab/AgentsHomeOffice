@@ -19,8 +19,9 @@ server.on('upgrade', function(req, socket, head) {
   proxy.ws(req, socket, head, { target: 'ws://127.0.0.1:6001' });
 });
 
-server.listen(19000, () => {
-  console.log("Unified Proxy running on port 19000");
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`Unified Proxy running on port ${PORT}`);
   console.log("-> HTTP routes to 19001 (Flask)");
   console.log("-> WS routes to 6001 (Event Bus)");
 });
