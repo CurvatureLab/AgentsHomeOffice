@@ -105,16 +105,43 @@ function handleCASPUpdate(payload) {
     updateTaskBoard();
 }
 
-// Override the native fetch to intercept /agents calls from index.html's legacy renderer
+// Initialize cache with real backend data once
+let _initialFetchDone = false;
 const originalFetch = window.fetch;
+
 window.fetch = async function() {
     const url = arguments[0];
-    if (window._curvatureWsConnected && typeof url === 'string') {
-        if (url.includes('/agents')) {
-            return new Response(JSON.stringify(window._mockAgentsData || []), {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' }
-            });
+    if (typeof url === 'string' && url.includes('/agents')) {
+        // Fetch real state from backend first
+        try {
+            const res = await originalFetch.apply(this, arguments);
+            const data = await res.clone().json();
+            
+            // Merge into cache if not already there (WebSocket events take precedence)
+            if (Array.isArray(data)) {
+                data.forEach(agent => {
+                    if (!window._cachedAgentsMap[agent.agentId]) {
+                        window._cachedAgentsMap[agent.agentId] = agent;
+                    }
+                });
+                
+                // Update the mock data to include backend agents + WS agents
+                window._mockAgentsData = Object.values(window._cachedAgentsMap).filter(a => !a.isMain);
+                _initialFetchDone = true;
+            }
+            
+            // If WS is connected, return the fully merged cache
+            if (window._curvatureWsConnected) {
+                return new Response(JSON.stringify(window._mockAgentsData || []), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+            
+            // Otherwise just return the backend response
+            return res;
+        } catch (e) {
+            console.error("Failed to fetch /agents", e);
         }
     }
     return originalFetch.apply(this, arguments);
