@@ -4,8 +4,8 @@ echo "Starting Curvature Agent Home Office..."
 # 1. Install dependencies (skip in Docker where they are pre-installed)
 if [ -z "$DOCKER_ENV" ]; then
   echo "Installing Python & Node dependencies..."
-  pip install -r backend/requirements.txt > /dev/null 2>&1
-  npm install ws http-proxy-middleware express cors > /dev/null 2>&1
+  pip install -r backend/requirements.txt websockets > /dev/null 2>&1
+  npm install ws http-proxy express cors > /dev/null 2>&1
 
   # Kill existing processes (local dev only)
   kill $(ps aux | grep "backend/app.py" | grep -v grep | awk '{print $2}') 2>/dev/null || true
