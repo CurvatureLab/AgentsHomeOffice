@@ -3,6 +3,7 @@
 
 from flask import Flask, jsonify, send_from_directory, make_response, request, session
 from datetime import datetime, timedelta
+import asyncio
 import json
 import os
 import random
@@ -104,6 +105,54 @@ _bg_tasks_lock = threading.Lock()
 import time
 VERSION_TIMESTAMP = str(int(time.time()))
 ASSET_DRAWER_PASS_DEFAULT = os.getenv("ASSET_DRAWER_PASS", "1234")
+
+# Token for external agents to push state via /api/agent/push_state
+# Set AGENT_PUSH_TOKEN env var in production; empty string disables token check (dev mode)
+AGENT_PUSH_TOKEN = os.getenv("AGENT_PUSH_TOKEN", "")
+
+# Internal Event Bus address for broadcasting state changes to WebSocket clients
+EVENT_BUS_HOST = os.getenv("EVENT_BUS_HOST", "127.0.0.1")
+EVENT_BUS_PORT = int(os.getenv("EVENT_BUS_PORT", "6001"))
+
+
+def _broadcast_agents_update():
+    """Send agents.update event to all WebSocket clients via the Event Bus.
+
+    Opens a short-lived internal WS connection to the Event Bus, subscribes to
+    the broadcast channel, publishes the updated agents list, then disconnects.
+    This runs in a background thread so it never blocks the Flask request.
+    """
+    try:
+        import websockets.sync.client as ws_sync
+        agents = load_agents_state()
+        # Filter to only approved/main agents for broadcast
+        visible = [a for a in agents if a.get("isMain") or a.get("authStatus") in ("approved", "offline")]
+        payload = json.dumps({
+            "event": "agents.update",
+            "data": json.dumps(visible),
+            "channel": "office"
+        })
+        with ws_sync.connect(f"ws://{EVENT_BUS_HOST}:{EVENT_BUS_PORT}") as ws:
+            # Wait for connection_established
+            ws.recv(timeout=3)
+            # Subscribe to channel
+            ws.send(json.dumps({
+                "event": "pusher:subscribe",
+                "data": {"channel": "office"}
+            }))
+            ws.recv(timeout=3)
+            # Send the broadcast event
+            ws.send(payload)
+    except Exception as e:
+        import traceback
+        print(f"[broadcast] Failed to broadcast agents.update: {e}")
+        traceback.print_exc()
+
+
+def _broadcast_agents_update_async():
+    """Fire-and-forget broadcast in a background thread."""
+    t = threading.Thread(target=_broadcast_agents_update, daemon=True)
+    t.start()
 
 if is_production_mode():
     hardening_errors = []
@@ -1208,7 +1257,110 @@ def agent_push():
         target["lastPushAt"] = datetime.now().isoformat()
 
         save_agents_state(agents)
+
+        # Broadcast to all connected WebSocket frontends
+        _broadcast_agents_update_async()
+
         return jsonify({"ok": True, "agentId": agent_id, "area": target.get("area")})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)}), 500
+
+
+@app.route("/api/agent/push_state", methods=["POST"])
+def api_agent_push_state():
+    """Centralized Event Bus: accept state pushes from external agents.
+
+    This endpoint does NOT require join-key registration. External agents
+    authenticate with a Bearer token (AGENT_PUSH_TOKEN) and push state
+    following the agreed data contract.
+
+    Expected payload:
+    {
+      "event": "agent.state_push",
+      "data": {
+        "agentId": "mac_mavis",
+        "name": "Mavis",
+        "owner": "Mac",
+        "state": "writing",
+        "detail": "正在分析金融 Skill 市场生态",
+        "timestamp": 1773369600
+      }
+    }
+    """
+    # Token auth
+    if AGENT_PUSH_TOKEN:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"ok": False, "msg": "Missing Authorization header"}), 401
+        token = auth_header[len("Bearer "):]
+        if token != AGENT_PUSH_TOKEN:
+            return jsonify({"ok": False, "msg": "Invalid token"}), 403
+
+    try:
+        body = request.get_json()
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "msg": "invalid json"}), 400
+
+        # Support both flat payload and nested {event, data} envelope
+        if "data" in body and isinstance(body["data"], dict) and "agentId" in body["data"]:
+            d = body["data"]
+        else:
+            d = body
+
+        agent_id = (d.get("agentId") or "").strip()
+        name = (d.get("name") or "").strip()
+        owner = (d.get("owner") or "").strip()
+        raw_state = (d.get("state") or "").strip()
+        detail = (d.get("detail") or "").strip()
+
+        if not agent_id or not raw_state:
+            return jsonify({"ok": False, "msg": "agentId and state are required"}), 400
+
+        state = normalize_agent_state(raw_state)
+        now = datetime.now()
+
+        agents = load_agents_state()
+        target = next((a for a in agents if a.get("agentId") == agent_id), None)
+
+        if target:
+            # Update existing agent
+            target["state"] = state
+            target["detail"] = detail
+            if name:
+                target["name"] = name
+            if owner:
+                target["owner"] = owner
+            target["updated_at"] = now.isoformat()
+            target["area"] = state_to_area(state)
+            target["source"] = f"remote-{owner.lower()}" if owner else "remote-push"
+            target["lastPushAt"] = now.isoformat()
+            target["authStatus"] = "approved"
+        else:
+            # Auto-register new external agent
+            new_agent = {
+                "agentId": agent_id,
+                "name": name or agent_id,
+                "owner": owner,
+                "isMain": False,
+                "state": state,
+                "detail": detail,
+                "area": state_to_area(state),
+                "updated_at": now.isoformat(),
+                "source": f"remote-{owner.lower()}" if owner else "remote-push",
+                "joinKey": None,
+                "authStatus": "approved",
+                "authApprovedAt": now.isoformat(),
+                "authExpiresAt": None,
+                "lastPushAt": now.isoformat(),
+            }
+            agents.append(new_agent)
+
+        save_agents_state(agents)
+
+        # Broadcast to all connected WebSocket frontends
+        _broadcast_agents_update_async()
+
+        return jsonify({"ok": True, "agentId": agent_id, "area": state_to_area(state)})
     except Exception as e:
         return jsonify({"ok": False, "msg": str(e)}), 500
 
@@ -1285,6 +1437,18 @@ def set_state_endpoint():
             state["detail"] = data["detail"]
         state["updated_at"] = datetime.now().isoformat()
         save_state(state)
+
+        # Sync main agent state into agents-state.json and broadcast
+        agents = load_agents_state()
+        main_agent = next((a for a in agents if a.get("isMain")), None)
+        if main_agent:
+            main_agent["state"] = state.get("state", "idle")
+            main_agent["detail"] = state.get("detail", "")
+            main_agent["area"] = state_to_area(main_agent["state"])
+            main_agent["updated_at"] = state["updated_at"]
+            save_agents_state(agents)
+            _broadcast_agents_update_async()
+
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "msg": str(e)}), 500

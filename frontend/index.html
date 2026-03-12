@@ -1726,7 +1726,15 @@
         let wsClient = null;
         let wsConnected = false;
         let wsReconnectTimer = null;
-        const WS_URL = 'ws://127.0.0.1:6001';
+        // Dynamic WS URL: use current host in production, fallback to localhost for dev
+        const WS_URL = (function() {
+            const loc = window.location;
+            if (loc.hostname === 'localhost' || loc.hostname === '127.0.0.1') {
+                return 'ws://127.0.0.1:6001';
+            }
+            const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+            return proto + '//' + loc.host;
+        })();
         const WS_RECONNECT_INTERVAL = 5000;
 
         // Initialize WebSocket connection to Event Bus
@@ -1742,6 +1750,11 @@
                         clearTimeout(wsReconnectTimer);
                         wsReconnectTimer = null;
                     }
+                    // Subscribe to the "office" channel for centralized broadcasts
+                    wsClient.send(JSON.stringify({
+                        event: 'pusher:subscribe',
+                        data: { channel: 'office' }
+                    }));
                 };
 
                 wsClient.onmessage = function(event) {
@@ -1806,10 +1819,14 @@
                     break;
 
                 case 'agents.update':
-                    // Handle agents list update
-                    if (Array.isArray(data)) {
-                        guestAgents = data;
-                        handleGuestAgentsUpdate(data);
+                    // Handle agents list update (data may be a JSON string from channel broadcast)
+                    var agentsData = data;
+                    if (typeof agentsData === 'string') {
+                        try { agentsData = JSON.parse(agentsData); } catch(e) {}
+                    }
+                    if (Array.isArray(agentsData)) {
+                        guestAgents = agentsData;
+                        handleGuestAgentsUpdate(agentsData);
                     }
                     break;
 
